@@ -1,0 +1,6 @@
+.DS_Store
+config/local-paths.yaml
+*.tmp
+~$*
+customer-data/
+

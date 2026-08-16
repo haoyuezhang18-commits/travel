@@ -1,0 +1,5 @@
+# 复制为 local-paths.yaml 后填写本机路径。local-paths.yaml 不应提交客户隐私信息。
+template_root: "/path/to/旅游通用模板"
+uk_city_templates: "/path/to/旅游通用模板/英国旅游通用模板/城市"
+output_root: "/path/to/客户交付"
+
