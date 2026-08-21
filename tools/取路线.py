@@ -65,7 +65,8 @@ def main():
         if not hit:
             print(f'没有匹配 "{a.kw}" 的路线'); return 1
         for r in hit:
-            print(f"{r['路线编号']:16} {r['路线名称']}")
+            img = f"图{r.get('图片数','?'):>3}" if r.get('图片数') else '      '
+            print(f"{r['路线编号']:16} {img}  {r['路线名称']}")
         return 0
 
     if not a.code:
@@ -96,7 +97,7 @@ def main():
         offset = 1 if (tables and tables[0].rows and '路线编号' in tables[0].rows[0].cells[0].text) else 0
         tbl = tables[idx + offset]
         print(f"# 【{r['路线编号']}】{r['路线名称']}")
-        print(f"来源：{r['模板文件（相对旅游通用模板/）']}（第 {r['文件内第几张表']} 张表）\n")
+        print(f"来源：{r['模板文件（相对旅游通用模板/）']}（第 {r['文件内第几张表']} 张表，图 {r.get('图片数','?')} 张）\n")
         print(dump_table(tbl))
     return 0
 
