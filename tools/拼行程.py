@@ -140,12 +140,16 @@ def set_cell(tr, col, text):
 COLS = {'时间段': 0, '行程内容': 1, '交通': 2, '备注': 3}
 
 
-def find_rows(rows, kw, whole=False, col=None):
+def find_rows(rows, kw, whole=False, col=None, exact=False):
     """默认只在「行程内容」列匹配。
 
     备注列里经常顺带提到别的地名（例如古罗马广场的备注写着
     "从后门6出口出去就是真理之口"），整行匹配会改错行。
     """
+    if exact:
+        hit = [tr for tr in rows if row_text(tr, 1).strip() == kw]
+        if hit:
+            return hit
     if col is not None:
         return [tr for tr in rows if kw in row_text(tr, COLS.get(col, col))]
     if whole:
@@ -170,7 +174,8 @@ def apply_row_ops(tbl_el, day):
 
     for op in day.get('改', []):
         kw = op['配']
-        hit = find_rows(data_rows(), kw, whole=op.get('整行匹配', False), col=op.get('配列'))
+        hit = find_rows(data_rows(), kw, whole=op.get('整行匹配', False),
+                        col=op.get('配列'), exact=op.get('精确', False))
         if not hit:
             log.append(f'⚠ 修改失败，找不到「{kw}」'); continue
         if len(hit) > 1 and not op.get('允许多行'):
