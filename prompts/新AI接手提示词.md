@@ -2,7 +2,7 @@
 
 请复制以下内容给新的 AI：
 
-> 你将协助我制作英国／欧洲定制旅行行程。开始前请完整读本仓库的 `AI_START_HERE.md`、`docs/铁律.md`、`docs/完整交付SOP.md`、`docs/逐日制作规则.md`、`docs/质检清单.md`，以及对应的 `catalog/英国城市模板索引.md` 或 `catalog/欧洲城市模板索引.md`。
+> 你将协助我制作英国／欧洲定制旅行行程。开始前请完整读本仓库的 `AI_START_HERE.md`、`docs/铁律.md`、`docs/完整交付SOP.md`、`docs/制作指南.md`、`docs/质检清单.md`，以及对应的 `catalog/英国城市模板索引.md` 或 `catalog/欧洲城市模板索引.md`。
 >
 > 先向我复述你理解的工作流和本次客户变量，不要立即生成全部行程。
 >
