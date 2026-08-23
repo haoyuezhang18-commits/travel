@@ -262,6 +262,10 @@ def styled(p, text, bold=False, size=SIZE, color=None):
 
 TIME_RE = re.compile(r'(\d{1,2})\s*[:：]\s*(\d{2})')
 
+# 交付文件面向客户，不得出现内部用语（铁律第20条）
+INTERNAL = ['客户', '负责人', '模板', '沿用', '新增内容', '本单', '上一位',
+            '复用', '匹配度', '提醒客户', '这一单', '原表']
+
 
 def audit(tbl_el, day):
     """生成后自检：时间倒流、旧客户信息残留、重复时段。"""
@@ -291,6 +295,15 @@ def audit(tbl_el, day):
     for bad in day.get('不应出现', []):
         if bad in body:
             warn.append(f'残留旧信息：「{bad}」')
+
+    # 内部用语：整行（含备注）都要查
+    for tr in rows:
+        whole = row_text(tr)
+        for w in INTERNAL:
+            if w in whole:
+                frag = next((ln.strip() for ln in whole.split('●') if w in ln), whole)
+                warn.append(f'出现内部用语「{w}」：{frag[:46]}')
+                break
     return warn
 
 
@@ -308,6 +321,13 @@ def main():
     for s in doc.sections:
         s.left_margin = s.right_margin = Pt(36)
 
+    # 标题与概述同样面向客户，一并查内部用语
+    head_warn = []
+    for txt in [cfg.get('标题', '')] + list(cfg.get('概述', [])):
+        for w in INTERNAL:
+            if w in txt:
+                head_warn.append(f'标题/概述出现内部用语「{w}」：{txt.strip()[:46]}')
+                break
     styled(doc.add_paragraph(), cfg.get('标题', ''), bold=True, size=Pt(16))
     for line in cfg.get('概述', []):
         styled(doc.add_paragraph(), line)
@@ -316,14 +336,15 @@ def main():
     total_img = 0
     cache = {}
     seen_imgs = {}
-    problems = []
+    problems = list(head_warn)
+    for w in head_warn:
+        print('  ⚠ ' + w)
+
     for day in cfg['天']:
         sources = day.get('取') or [{'编号': day['编号']}]
 
         styled(doc.add_paragraph(), day['标题'], bold=True, size=Pt(13))
-        if day.get('说明'):
-            styled(doc.add_paragraph(), day['说明'], size=Pt(8.5),
-                   color=RGBColor(0x88, 0x44, 0x00))
+        # 「说明」是给负责人的内部信息，只打印到终端，不写进客户文件（铁律第20条）
 
         new_el, n, srcnote = None, 0, []
         for si, sc in enumerate(sources):
@@ -365,6 +386,8 @@ def main():
         styled(gap, '')
         print(f"  {day['标题'][:20]:22} ← {code} 图{n} 替换{hits}处 " +
               (f"行操作{len(oplog)}项" if oplog else ""))
+        if day.get('说明'):
+            print(f"      〔内部〕{day['说明']}")
         for L in oplog:
             if L.startswith('⚠'):
                 print('      ' + L); problems.append(f"{day['标题'][:12]}｜{L}")
