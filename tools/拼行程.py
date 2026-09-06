@@ -109,6 +109,44 @@ def _has_img(el):
     return el.find('.//' + qn('w:drawing')) is not None or el.find('.//' + qn('w:pict')) is not None
 
 
+def append_cell(tr, col, text):
+    """在格子末尾追加几行，原有文字、格式、图片全部保留。
+    用于「模板写得好、只想补一两句」的情况——别用 set_cell 整格覆盖。"""
+    tcs = tr.findall(TC)
+    if col >= len(tcs):
+        return
+    tc = tcs[col]
+    ps = tc.findall(qn('w:p'))
+    proto_p = None
+    for p_ in ps:
+        if not _has_img(p_):
+            proto_p = p_
+    if proto_p is None:
+        proto_p = ps[-1] if ps else None
+    for line in str(text).split('\n'):
+        newp = copy.deepcopy(proto_p) if proto_p is not None else tc.makeelement(qn('w:p'), {})
+        for ch in list(newp):
+            if ch.tag != qn('w:pPr'):
+                newp.remove(ch)
+        proto_r = None
+        if proto_p is not None:
+            for r in proto_p.findall(qn('w:r')):
+                if not _has_img(r):
+                    proto_r = copy.deepcopy(r)
+                    for d in proto_r.findall(qn('w:drawing')) + proto_r.findall(qn('w:pict')):
+                        proto_r.remove(d)
+                    for t in proto_r.findall(WT):
+                        proto_r.remove(t)
+                    break
+        r = proto_r if proto_r is not None else newp.makeelement(qn('w:r'), {})
+        t = r.makeelement(WT, {})
+        t.text = line
+        t.set(qn('xml:space'), 'preserve')
+        r.append(t)
+        newp.append(r)
+        tc.append(newp)
+
+
 def set_cell(tr, col, text):
     """把某格文字整体换掉，保留该格第一个 run 的格式；● 分点用真换行。
     带图片的段落原样保留并挪到文字后面——改备注不能把模板攒的图删掉。"""
@@ -203,6 +241,9 @@ def apply_row_ops(tbl_el, day):
             for ci, key in enumerate(['时间段', '行程内容', '交通', '备注']):
                 if key in op:
                     set_cell(tr, ci, op[key])
+            for ci, key in enumerate(['追加时间段', '追加行程内容', '追加交通', '追加备注']):
+                if key in op:
+                    append_cell(tr, ci, op[key])
             log.append(f'修改「{kw}」')
 
     for op in day.get('增', []):
