@@ -105,18 +105,37 @@ def row_text(tr, col=None):
     return ''.join(t.text or '' for t in tcs[col].iter(WT))
 
 
+def _has_img(el):
+    return el.find('.//' + qn('w:drawing')) is not None or el.find('.//' + qn('w:pict')) is not None
+
+
 def set_cell(tr, col, text):
-    """把某格文字整体换掉，保留该格第一个 run 的格式；● 分点用真换行。"""
+    """把某格文字整体换掉，保留该格第一个 run 的格式；● 分点用真换行。
+    带图片的段落原样保留并挪到文字后面——改备注不能把模板攒的图删掉。"""
     tcs = tr.findall(TC)
     if col >= len(tcs):
         return
     tc = tcs[col]
     ps = tc.findall(qn('w:p'))
-    keep = ps[0]
-    for extra in ps[1:]:
-        tc.remove(extra)
+    imgs = [p for p in ps if _has_img(p)]      # 图片段落，原样留着
+    texts = [p for p in ps if p not in imgs]   # 文字段落，才是要换掉的
+    if texts:
+        keep = texts[0]
+        for extra in texts[1:]:
+            tc.remove(extra)
+    else:
+        keep = tc.makeelement(qn('w:p'), {})
+        (imgs[0].addprevious(keep) if imgs else tc.append(keep))
+    for p in imgs:                              # 图片统一挪到文字后面
+        tc.remove(p)
+        tc.append(p)
     runs = keep.findall(qn('w:r'))
-    proto = copy.deepcopy(runs[0]) if runs else None
+    proto = None
+    for r in runs:
+        if proto is None and not _has_img(r):   # 别拿带图的 run 当格式模子
+            proto = copy.deepcopy(r)
+            for d in proto.findall(qn('w:drawing')) + proto.findall(qn('w:pict')):
+                proto.remove(d)
     for r in runs:
         keep.remove(r)
     for i, line in enumerate(str(text).split('\n')):
