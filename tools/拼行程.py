@@ -270,6 +270,32 @@ def apply_row_ops(tbl_el, day):
                 hit[-1].addnext(proto)
         log.append(f"新增「{str(op.get('行程内容',''))[:16]}」")
 
+    # 搬图：把带图片的段落从一行挪到另一行的同一列。
+    # 为什么需要：模板里的照片是跟着具体那家店／那个机位的。换掉一格的餐厅推荐，
+    # 照片就对不上人了（踩过：D1 晚餐改成考文特花园，可那格的照片是孔雀临江宴——
+    # 窗外大本钟的中餐厅，属于西敏区）。正确做法是把店和它的照片一起挪到对得上的那一行，
+    # 而不是删照片（铁律第 13 条）。
+    for op in day.get('搬图', []):
+        src = find_rows(tbl_el.findall(TR)[1:], op['从'], col=op.get('从列'))
+        dst = find_rows(tbl_el.findall(TR)[1:], op['到'], col=op.get('到列'))
+        if not src or not dst:
+            log.append(f"⚠ 搬图找不到「{op['从'] if not src else op['到']}」")
+            continue
+        ci = COLS.get(op.get('列', '备注'), 3)
+        stc, dtc = src[0].findall(TC), dst[0].findall(TC)
+        if ci >= len(stc) or ci >= len(dtc):
+            log.append(f"⚠ 搬图：第 {ci + 1} 列不存在")
+            continue
+        moved = 0
+        for p in [p for p in stc[ci].findall(qn('w:p')) if _has_img(p)]:
+            stc[ci].remove(p)
+            dtc[ci].append(p)
+            moved += 1
+        if moved:
+            log.append(f"搬图「{op['从'][:10]}」→「{op['到'][:10]}」{moved} 张")
+        else:
+            log.append(f"⚠ 搬图：「{op['从'][:10]}」里没有带图的段落")
+
     if day.get('序'):
         rows = tbl_el.findall(TR)
         head, data = rows[0], rows[1:]
