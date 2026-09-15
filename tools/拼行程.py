@@ -367,6 +367,96 @@ def audit(tbl_el, day):
     return warn
 
 
+# ---------------------------------------------------------------- 样式补齐
+# 为什么需要这一步：输出文档是 python-docx 的空白模板（styles.xml 用
+# Normal / Heading1 这类英文名 ID），而 WPS 做的城市模板用的是 "1"/"2"/"5"
+# 这种数字 ID。整表搬过来后，表格里的 pStyle/rStyle/tblStyle 指向的 ID 在
+# 输出文档里不存在——Word 遇到悬空样式引用直接报「文件已损坏」，WPS 宽容
+# 一些但会渲染不全（实测伦敦5天单：4 个悬空 ID，Word 打不开）。
+# 多模板拼表时尤其容易踩到，因为只可能带走其中一份 styles.xml。
+STYLE_REF = {'pStyle': 'paragraph', 'rStyle': 'character', 'tblStyle': 'table'}
+
+
+def _style_index(styles_el):
+    """styleId -> (type, name)　和　(type, name) -> styleId"""
+    by_id, by_name = {}, {}
+    for st in styles_el.findall(qn('w:style')):
+        sid = st.get(qn('w:styleId')); typ = st.get(qn('w:type'))
+        nm = st.find(qn('w:name'))
+        name = nm.get(qn('w:val')) if nm is not None else ''
+        by_id[sid] = (typ, name, st)
+        by_name[(typ, name)] = sid
+    return by_id, by_name
+
+
+def fix_styles(doc, src_docs):
+    """把搬进来的表格里悬空的样式引用补齐或重映射。返回日志。"""
+    log = []
+    dst_styles = doc.styles.element
+    d_by_id, d_by_name = _style_index(dst_styles)
+    src_idx = [_style_index(s.styles.element)[0] for s in src_docs]
+
+    imported, remapped, dropped = {}, 0, 0
+    for tag, typ in STYLE_REF.items():
+        for ref in list(doc.element.body.iter(qn('w:' + tag))):
+            sid = ref.get(qn('w:val'))
+            if sid is None or sid in d_by_id:
+                continue
+            found = None
+            for idx in src_idx:                       # 在各来源模板里按 ID 找
+                if sid in idx and idx[sid][0] == typ:
+                    found = idx[sid]; break
+            if found is None:
+                ref.getparent().remove(ref); dropped += 1
+                continue
+            _, name, st_el = found
+            if (typ, name) in d_by_name:              # 输出里有同名同类样式 → 改指向
+                ref.set(qn('w:val'), d_by_name[(typ, name)])
+                remapped += 1
+                continue
+            if sid not in imported:                   # 没有 → 把定义搬过来
+                new = copy.deepcopy(st_el)
+                for child in ('basedOn', 'link', 'next'):
+                    el = new.find(qn('w:' + child))
+                    if el is None:
+                        continue
+                    tgt = el.get(qn('w:val'))
+                    if tgt in d_by_id:
+                        continue
+                    # 套娃引用也要解：按名字找输出里的对应样式，找不到就去掉
+                    r = None
+                    for idx in src_idx:
+                        if tgt in idx:
+                            r = d_by_name.get((idx[tgt][0], idx[tgt][1])); break
+                    if r:
+                        el.set(qn('w:val'), r)
+                    else:
+                        new.remove(el)
+                dst_styles.append(new)
+                d_by_id[sid] = (typ, name, new)
+                d_by_name[(typ, name)] = sid
+                imported[sid] = name
+    if imported:
+        log.append('补入样式定义：' + '、'.join(f'{k}({v})' for k, v in imported.items()))
+    if remapped:
+        log.append(f'重映射同名样式引用 {remapped} 处')
+    if dropped:
+        log.append(f'删除无法解析的样式引用 {dropped} 处')
+    return log
+
+
+def dangling_styles(doc):
+    """交付前自检：还有没有指向不存在样式的引用（Word 会判文件损坏）。"""
+    have = {st.get(qn('w:styleId')) for st in doc.styles.element.findall(qn('w:style'))}
+    bad = set()
+    for tag in STYLE_REF:
+        for ref in doc.element.body.iter(qn('w:' + tag)):
+            v = ref.get(qn('w:val'))
+            if v and v not in have:
+                bad.add(f'{tag}={v}')
+    return sorted(bad)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('recipe'); ap.add_argument('out'); ap.add_argument('--root')
@@ -395,6 +485,7 @@ def main():
 
     total_img = 0
     cache = {}
+    used_srcs = set()
     seen_imgs = {}
     problems = list(head_warn)
     for w in head_warn:
@@ -413,6 +504,7 @@ def main():
             if path not in cache:
                 cache[path] = Document(path)
             src = cache[path]
+            used_srcs.add(path)
             tbl = get_table(src, int(row['文件内第几张表']))
             srcnote.append(f"{sc['编号']}(图{table_images(tbl)})")
             part = copy.deepcopy(tbl._tbl)
@@ -453,6 +545,13 @@ def main():
                 print('      ' + L); problems.append(f"{day['标题'][:12]}｜{L}")
         for w in audit(new_el, day):
             print('      ⚠ ' + w); problems.append(f"{day['标题'][:12]}｜{w}")
+
+    for L in fix_styles(doc, [cache[p] for p in sorted(used_srcs)]):
+        print('  · ' + L)
+    bad = dangling_styles(doc)
+    if bad:
+        problems.append('样式引用悬空（Word 会判文件损坏）：' + '、'.join(bad))
+        print('  ⚠ 样式引用悬空：' + '、'.join(bad))
 
     doc.save(a.out)
     print(f'\n已生成：{a.out}　（共 {len(cfg["天"])} 天，搬运图片 {total_img} 处）')
