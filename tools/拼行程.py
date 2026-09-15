@@ -109,6 +109,31 @@ def _has_img(el):
     return el.find('.//' + qn('w:drawing')) is not None or el.find('.//' + qn('w:pict')) is not None
 
 
+def _proto_run(p):
+    """从段落里挑一个「只带格式」的 run 当模子：只保留 w:rPr，其余子元素全部剔掉。
+
+    必须剔干净，不能只删 w:t。模板里的 run 可能带：
+      · w:fldChar —— 域代码的开头／结尾（超链接、页码这些都是域）
+      · w:instrText —— 域的指令文字
+      · w:br / w:tab / w:drawing / w:pict / w:footnoteReference …
+
+    踩过的坑（2026-09 伦敦5天单）：模子里留下了一个 `w:fldChar begin`，
+    于是追加的每一行都开了一个**永不闭合的域**。后果是
+    **WPS 从那里开始整篇停止渲染（5 页塌成 1 页、字数 1546 → 217），
+    Word 直接报「文件已损坏」**——而文字其实都在 XML 里，
+    python-docx 读得出来，所以原来的自检一条都抓不到。
+    """
+    for r in p.findall(qn('w:r')):
+        if _has_img(r):
+            continue
+        proto = copy.deepcopy(r)
+        for ch in list(proto):
+            if ch.tag != qn('w:rPr'):
+                proto.remove(ch)
+        return proto
+    return None
+
+
 def append_cell(tr, col, text):
     """在格子末尾追加几行，原有文字、格式、图片全部保留。
     用于「模板写得好、只想补一两句」的情况——别用 set_cell 整格覆盖。"""
@@ -128,16 +153,7 @@ def append_cell(tr, col, text):
         for ch in list(newp):
             if ch.tag != qn('w:pPr'):
                 newp.remove(ch)
-        proto_r = None
-        if proto_p is not None:
-            for r in proto_p.findall(qn('w:r')):
-                if not _has_img(r):
-                    proto_r = copy.deepcopy(r)
-                    for d in proto_r.findall(qn('w:drawing')) + proto_r.findall(qn('w:pict')):
-                        proto_r.remove(d)
-                    for t in proto_r.findall(WT):
-                        proto_r.remove(t)
-                    break
+        proto_r = _proto_run(proto_p) if proto_p is not None else None
         r = proto_r if proto_r is not None else newp.makeelement(qn('w:r'), {})
         t = r.makeelement(WT, {})
         t.text = line
@@ -167,24 +183,11 @@ def set_cell(tr, col, text):
     for p in imgs:                              # 图片统一挪到文字后面
         tc.remove(p)
         tc.append(p)
-    runs = keep.findall(qn('w:r'))
-    proto = None
-    for r in runs:
-        if proto is None and not _has_img(r):   # 别拿带图的 run 当格式模子
-            proto = copy.deepcopy(r)
-            for d in proto.findall(qn('w:drawing')) + proto.findall(qn('w:pict')):
-                proto.remove(d)
-    for r in runs:
+    proto = _proto_run(keep)                    # 只带格式的模子，见 _proto_run 的说明
+    for r in keep.findall(qn('w:r')):
         keep.remove(r)
     for i, line in enumerate(str(text).split('\n')):
-        if proto is not None:
-            r = copy.deepcopy(proto)
-            for t in r.findall(WT):
-                r.remove(t)
-            for br in r.findall(qn('w:br')):
-                r.remove(br)
-        else:
-            r = keep.makeelement(qn('w:r'), {})
+        r = copy.deepcopy(proto) if proto is not None else keep.makeelement(qn('w:r'), {})
         if i:
             r.append(r.makeelement(qn('w:br'), {}))
         t = r.makeelement(WT, {})
@@ -445,6 +448,25 @@ def fix_styles(doc, src_docs):
     return log
 
 
+def unbalanced_fields(doc):
+    """自检：域（w:fldChar）有没有 begin/end 不配对。
+
+    一个没闭合的 `fldChar begin` 会让 WPS 从那里开始整篇停止渲染、
+    Word 报「文件已损坏」，而文字在 XML 里都还在——内容类的自检抓不到，
+    必须单独查。逐个单元格查，不只看全篇总数，避免一个多一个少互相抵消。
+    """
+    bad = []
+    for ti, tbl in enumerate(doc.tables, 1):
+        for ri, row in enumerate(tbl.rows):
+            for ci, cell in enumerate(row.cells):
+                kinds = [fc.get(qn('w:fldCharType'))
+                         for fc in cell._tc.iter(qn('w:fldChar'))]
+                if kinds.count('begin') != kinds.count('end'):
+                    bad.append(f'第{ti}张表 第{ri}行 第{ci + 1}列 域未闭合'
+                               f'（begin {kinds.count("begin")} / end {kinds.count("end")}）')
+    return bad
+
+
 def dangling_styles(doc):
     """交付前自检：还有没有指向不存在样式的引用（Word 会判文件损坏）。"""
     have = {st.get(qn('w:styleId')) for st in doc.styles.element.findall(qn('w:style'))}
@@ -552,6 +574,9 @@ def main():
     if bad:
         problems.append('样式引用悬空（Word 会判文件损坏）：' + '、'.join(bad))
         print('  ⚠ 样式引用悬空：' + '、'.join(bad))
+    for w in unbalanced_fields(doc):
+        problems.append('域未闭合（WPS 会整篇停止渲染、Word 判损坏）：' + w)
+        print('  ⚠ ' + w)
 
     doc.save(a.out)
     print(f'\n已生成：{a.out}　（共 {len(cfg["天"])} 天，搬运图片 {total_img} 处）')
